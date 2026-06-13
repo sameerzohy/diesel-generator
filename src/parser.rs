@@ -1,6 +1,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde_norway::Value;
+use heck::ToSnakeCase;
 
 use crate::ir::{Constraint, FieldDef, TableDef, TypeDef};
 
@@ -24,7 +25,7 @@ pub fn parse_spec(text: &str) -> Result<TableDef> {
         .get("tableName")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .unwrap_or_else(|| name.to_lowercase());
+        .unwrap_or_else(|| name.to_snake_case());
 
     // Sub-mappings we look fields up in (any may be absent).
     let beam_type = body.get("beamType").and_then(Value::as_mapping);

@@ -200,22 +200,19 @@ The output directory is a normal Cargo crate (`src/schema/` with one file per ta
 
 ## Type mapping (the heart of the framework)
 
-`namma-diesel` resolves every field through one mapping table: **spec type → Rust type → Diesel SQL type → Postgres column type.**
+`namma-diesel` resolves every field into: **spec type → Rust type → Diesel SQL type → Postgres column type.** The generator itself owns only language primitives and structural rules:
 
-| Spec type (namma-dsl) | Rust type | Diesel SQL type | Postgres column (default) |
+| Spec type | Rust type | Diesel SQL type | Postgres column |
 |---|---|---|---|
 | `Text` | `String` | `Varchar` | `character varying(36)` |
-| `Maybe T` | `Option<T>` | `Nullable<…>` | (nullable) |
-| `Int` | `i64` | `BigInt` | `BIGINT` |
-| `Bool` | `bool` | `Bool` | `BOOLEAN` |
-| `Double` | `f64` | `Double` | `DOUBLE PRECISION` |
-| `HighPrecMoney` | `rust_decimal::Decimal` | `Numeric` | `NUMERIC` |
-| `UTCTime` | `chrono::DateTime<Utc>` | `Timestamptz` | `TIMESTAMPTZ` |
+| `Int` | `i64` | `Int8` | `bigint` |
+| `Bool` | `bool` | `Bool` | `boolean` |
+| `Double` | `f64` | `Float8` | `double precision` |
 | `Id T` | `String` | `Varchar` | `character varying(36)` |
-| custom enum + `beamType: Text` | generated `enum` | `Varchar` | `character varying(36)` |
-| `[T]` | `Vec<T>` | `Array<…>` | `T[]` |
+| `Maybe T` | `Option<T>` | `Nullable<…>` | (nullable) |
+| custom enum (in spec `types:`) | generated `enum` | `Varchar` | `character varying(36)` |
 
-These are the **defaults** (they mirror namma-dsl's out-of-box `sqlTypeMapper`, e.g. `Text`/`Id` → `character varying(36)`, not `TEXT`). The whole map lives in an optional TOML config and is overridable per project and per field (via the spec's `sqlType:`/`beamType:` blocks) — because namma-dsl's mapping is itself project-configurable, so there is no single universal mapping. Adding or overriding a type is a one-line change.
+**Any type that needs an import — money, timestamps, domain types — is supplied by your project's config, not by the generator.** The generator ships none of these: your repo's `namma-diesel.toml` declares each such type's Rust type, `use` import, SQL type, and crate dependency, because that mapping is your project's policy. An unknown type (not a primitive, not a spec `types:` entry, not in your config) is a hard error — the generator never silently emits code that won't compile.
 
 ---
 

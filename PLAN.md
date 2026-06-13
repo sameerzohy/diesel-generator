@@ -23,9 +23,10 @@ These are locked (decided during design). Everything below assumes them.
 |---|---|
 | **A1 — schema layout** | One file per table at `src/schema/<table>.rs`, plus a generated `src/schema/mod.rs` that declares each module and emits `allow_tables_to_appear_in_same_query!(...)` (and `joinable!` in v2) so tables can be queried together. The generator parses **all** specs first, then writes the per-table files and the single `mod.rs` — no per-spec overwrite. |
 | **A2 — auto-fields** | Inject `createdAt`/`updatedAt` (`TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`) during IR construction, since namma-dsl adds them too (Storage.hs:1323). `merchantId`/`merchantOperatingCityId` injection + exact column parity are **v2** — documented, not silent. |
-| **A3 — type map** | The SQL type map lives in the optional TOML config; defaults mirror namma-dsl's out-of-box values (`Text`/`Id` → `character varying(36)`, `Int` → `integer`, …). Repos that customized their Dhall `sqlTypeMapper` point the TOML at their own values. |
+| **A3 — type map** | *(Superseded by A6.)* The SQL type map lives in the optional TOML config; defaults mirror namma-dsl's out-of-box values. A6 generalizes this into the full type registry and moves the custom-type mappings out of the generator entirely. |
 | **A4 — enums** | Keep Text-backed hand-rolled `ToSql<Text,Pg>`/`FromSql<Text,Pg>` (matches namma-dsl's `beamType: Text` storage — do **not** use `diesel-derive-enum`, which would switch to a PG native enum type). `FromSql` returns a Diesel error (never panics) on an unrecognized string. Every enum gets a generated round-trip test. |
 | **A5 — Askama** | Use the `askama` crate **0.13+** (the project renamed back from `rinja`). Templates live in `templates/`. |
+| **A6 — type registry** | Three type categories: std primitives (code), YAML `types:` (generated, `import = crate::types::…`), and external/imported (config registry). `HighPrecMoney`/`UTCTime` are external (carry a `use` import + `crate` dep), **not** primitives. Registry = `Config.types: HashMap<String, TypeMapping{rust?,diesel?,pg?,import?,crate?}>` seeded with built-in defaults, overridable per project. Rust paths live in the config, never the shared YAML. Unknown type → hard error. |
 
 ### NOT in scope (v1)
 
@@ -77,15 +78,40 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
     writing tests.
 
 - [ ] **Commit 3 — `feat: type mapper (spec type to diesel sql type)`**
-  - *Goal:* resolve every field to its Diesel SQL type and column name.
-  - *Touch:* `src/typemap.rs` (`resolve(spec_type, optional, config) -> ResolvedType`;
-    `Maybe`→`Nullable<…>`); `src/config.rs` (optional TOML `[sql_types]` map, **A3**)
-    with defaults mirroring namma-dsl (`Text`/`Id` → `character varying(36)`, …) — not
-    the README's `TEXT`. Add `heck` for `driverId`→`driver_id`, `Ride`→`ride`. One test
-    per mapping row + `Option` + one enum + one config override.
-  - *Done when:* `cargo test` passes for every mapping-table row and a config override
-    changes the emitted SQL type.
-  - *Learn:* `match` exhaustiveness, returning structs, `heck`, TOML config, string handling.
+  - *Goal:* resolve every field into all facets the generators need, in one `ResolvedType`
+    (single source of truth — Commits 4/5/7 just read it):
+    ```
+    struct ResolvedType {
+        column_name: String,        // driverId -> driver_id  (heck)
+        rust_type:   String,        // String / Option<Decimal> / Status
+        diesel_sql:  String,        // Varchar / Nullable<Numeric>
+        pg_type:     String,        // character varying(36) / numeric
+        import:      Option<String>,// `use` path the model needs; None for std primitives
+    }
+    ```
+  - **Three type categories** (A6): (1) **std primitives** — `Text`/`Id _` → `String`/`Varchar`/
+    `varchar(36)`, `Int` → `i64`/`Int8`/`bigint`, `Bool`, `Double` — `import: None`. (2) **YAML
+    `types:`** (enums) — we generate them; `import = crate::types::<snake>::<Name>`. (3)
+    **external/imported** — `HighPrecMoney`, `UTCTime`, domain types — resolved via a **config
+    type registry**; `import` = the `use` path, plus a `crate` dep for the generated Cargo.toml.
+  - **Type registry (A6, supersedes A3):** `Config.types: HashMap<String, TypeMapping>` where
+    `TypeMapping { rust?, diesel?, pg?, import?, crate? }` (all optional → override one facet,
+    inherit the rest). Built-in defaults seed the registry (incl. `UTCTime` →
+    `chrono::DateTime<Utc>` and `HighPrecMoney` → `rust_decimal::Decimal`, each with its import +
+    crate). Config entries override/extend. The shared YAML stays Rust-free — Rust paths live in
+    the config, so one spec still feeds both backends.
+  - *Rules:* `optional` wraps Rust `Option<…>` / Diesel `Nullable<…>`; custom enum → `rust_type`
+    is the enum name, Text-backed; **unknown type → hard `anyhow` error** ("add to `[types]` or
+    declare in spec `types:`") — never emit code that won't compile.
+  - *Touch:* `src/typemap.rs` (`ResolvedType`, `builtin_types()`, `resolve(field, &types, &config)
+    -> Result<ResolvedType>`); `src/config.rs` (`Config`, `TypeMapping`, TOML load); add `heck`,
+    `serde`, `toml`. Commit 2's lowercase `sql_table` already fixed to `heck` snake_case.
+  - *Done when:* `cargo test` green — base types, `Id`, `Option` wrapping, a yaml enum
+    (import = `crate::types::…`), an external type (`HighPrecMoney`, import set), an **unknown
+    type → Err**, and a config entry overriding `pg`.
+  - *Learn:* `HashMap`, `match`/`matches!`, `Option` merge, `serde` derive, TOML, `heck`, error paths.
+  - *Note:* the generated crate's `Cargo.toml` (Commit 8) must include the `crate` deps of every
+    imported type actually used, or `cargo check` fails. Collect used imports in Commit 5.
 
 - [ ] **Commit 4 — `feat: generate per-table schema + global mod.rs`** ← **first generated Rust**
   - *Goal:* write real Diesel schema from the IR, **A1 layout**.
@@ -430,6 +456,7 @@ Build these only after v1 is solid. Each maps to a namma-dsl feature.
 | **Cached / KV queries** | `CachedQueries.hs` | Redis-backed wrappers. Rust side: a cache trait + generated key construction. |
 | **Incremental regen** | git-hash file-state (`App.hs`) | `git hash-object` vs `HEAD` to skip unchanged specs. Straightforward port. |
 | **Schema-diff migrations** | `SQL/Table.hs` `ALTER` generation | Compare new spec to last `up.sql`; emit `ALTER TABLE` instead of `CREATE`. The hardest v2 item. |
+| **`beamType` storage override** | `beamType:` block | Apply `db_type_override` to a non-enum field's storage (override Diesel/PG type, keep the domain Rust type). Parsed into the IR in v1 but not yet applied (`resolve` has a NOTE). Enums are already text-backed. |
 | **Workspace split** | namma-dsl's lib layout | Split into `nd-core` / `nd-parser` / `nd-codegen` / `nd-cli` crates when it grows. |
 
 ---
