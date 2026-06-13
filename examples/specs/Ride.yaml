@@ -1,0 +1,16 @@
+Ride:
+  tableName: ride
+  fields:
+    id: Id Ride
+    status: Status
+    fare: Maybe HighPrecMoney
+    driverId: Id Person
+  constraints:
+    id: PrimaryKey
+    driverId: SecondaryKey
+  beamType:
+    status: Text
+  types:
+    Status:
+      - enum: "NEW,INPROGRESS,COMPLETED,CANCELLED"
+      - derive: "Show,Eq"

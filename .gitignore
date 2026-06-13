@@ -1,0 +1,14 @@
+# Rust build output
+/target
+
+# Generator scratch output (the --out directory)
+/out
+
+# macOS
+.DS_Store
+
+# Obsidian vault config (not part of this project)
+.obsidian/
+
+# Local Claude Code settings
+.claude/settings.local.json
