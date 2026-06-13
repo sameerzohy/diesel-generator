@@ -33,11 +33,11 @@ pub fn run() -> Result<()> {
     }   
 }   
 
-/// Commit 1: just read the spec and print it. Parsing comes in Commit 2.
-fn generate(spec: &PathBuf, out: &PathBuf) -> Result<()> {
+/// Commit 2: read the spec, parse it into the IR, and print the IR.
+fn generate(spec: &PathBuf, _out: &PathBuf) -> Result<()> {
     let text = fs::read_to_string(spec)
         .with_context(|| format!("failed to read spec file {}", spec.display()))?;
-    println!("--- spec: {}  (out: {}) ---", spec.display(), out.display());
-    println!("{text}");
+    let table = crate::parser::parse_spec(&text)?;
+    println!("{table:#?}");
     Ok(())
 }

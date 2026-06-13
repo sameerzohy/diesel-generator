@@ -66,14 +66,14 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
 - [ ] **Commit 2 — `feat: parse storage spec into IR`**
   - *Goal:* turn the YAML into Rust structs. The IR is the contract everything reads.
   - *Touch:* `src/ir.rs` (`TableDef`, `FieldDef`, `Constraint`); `src/parser.rs`
-    (`serde_yaml::Value` walk → `TableDef`: name, `sql_table`, fields, `optional`
+    (`serde_norway::Value` walk → `TableDef`: name, `sql_table`, fields, `optional`
     from `Maybe`, `primary_key` from `constraints`). **Auto-field injection (A2):**
     after parsing, append `created_at`/`updated_at` `FieldDef`s
     (`TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`) unless already present. Add
-    `serde`, `serde_yaml`, `anyhow`. One `#[test]` parsing `Ride.yaml`.
+    `serde`, `serde_norway`, `anyhow`. One `#[test]` parsing `Ride.yaml`.
   - *Done when:* `cargo test` passes; printing the IR with `{:#?}` shows correct
     field count (including injected created/updated), PK, and `optional` flags.
-  - *Learn:* structs, enums, `Vec`, `Option`, `match`, `serde_yaml::Value` navigation,
+  - *Learn:* structs, enums, `Vec`, `Option`, `match`, `serde_norway::Value` navigation,
     writing tests.
 
 - [ ] **Commit 3 — `feat: type mapper (spec type to diesel sql type)`**
@@ -183,7 +183,7 @@ namma-diesel/
 │   ├── cli.rs           # arg parsing + command dispatch
 │   ├── config.rs        # config struct
 │   ├── ir.rs            # TableDef, FieldDef, TypeDef, Constraint, IndexDef
-│   ├── parser.rs        # serde_yaml -> IR
+│   ├── parser.rs        # serde_norway -> IR
 │   ├── typemap.rs       # spec type -> (Rust type, SQL type)
 │   ├── codegen/
 │   │   ├── mod.rs       # orchestrates generators
@@ -213,7 +213,7 @@ Add these as the phases that need them arrive — don't front-load.
 | Crate | Purpose | Phase |
 |---|---|---|
 | `clap` (derive feature) | CLI parsing | 0 |
-| `serde`, `serde_yaml` | YAML → structs | 1 |
+| `serde`, `serde_norway` | YAML → structs | 1 |
 | `anyhow` | easy error handling (`Result` + `?`) | 1 |
 | `thiserror` | typed errors (later, nicer messages) | 7 |
 | `heck` | case conversion (`CamelCase` ↔ `snake_case`) | 2 |
@@ -275,12 +275,12 @@ This is the most important phase. Get the IR right and everything downstream is 
    }
    ```
 
-2. In `parser.rs`, parse the YAML. The namma-dsl format is a top-level map (`Ride: {...}`). Use `serde_yaml::Value` for a **forgiving** parse — walk the `Value` tree by hand rather than deriving `Deserialize` on the IR directly. Reason: the spec format has irregularities (old vs new field syntax, list-of-maps for `types`) that don't map cleanly onto derive. Walking `Value` is more code but far more robust, and it's how namma-dsl's parser works too (it walks the YAML with lenses).
+2. In `parser.rs`, parse the YAML. The namma-dsl format is a top-level map (`Ride: {...}`). Use `serde_norway::Value` for a **forgiving** parse — walk the `Value` tree by hand rather than deriving `Deserialize` on the IR directly. Reason: the spec format has irregularities (old vs new field syntax, list-of-maps for `types`) that don't map cleanly onto derive. Walking `Value` is more code but far more robust, and it's how namma-dsl's parser works too (it walks the YAML with lenses).
 3. Handle the two field syntaxes namma-dsl supports (ordered list-of-maps, and the legacy plain map).
 4. Strip the `Maybe ` prefix → set `optional = true`. Strip the `|WithId`-style relation suffix for now (record it, ignore it in v1).
 5. Write a unit test: parse `examples/specs/Ride.yaml`, assert the `TableDef` has the right field count, PK, and one enum type.
 
-**Rust concepts learned:** `struct` and `enum` definitions, `Vec`, `Option`, deriving `Debug`, pattern matching with `match`, borrowing while iterating, `serde_yaml::Value` navigation, writing `#[test]` functions.
+**Rust concepts learned:** `struct` and `enum` definitions, `Vec`, `Option`, deriving `Debug`, pattern matching with `match`, borrowing while iterating, `serde_norway::Value` navigation, writing `#[test]` functions.
 
 **Done when:** `cargo test` parses a real spec into a correct IR. **Print the IR with `{:#?}` and eyeball it.**
 
