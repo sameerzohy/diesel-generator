@@ -38,7 +38,7 @@ Given one Storage spec, `namma-diesel` emits, per table:
 
 | Artifact | File | Diesel concept | namma-dsl analog |
 |---|---|---|---|
-| **Schema** | `schema.rs` | `diesel::table! { … }` | Beam `TableT f` type |
+| **Schema** | `schema/<table>.rs` + `schema/mod.rs` | `diesel::table! { … }` + `allow_tables_to_appear_in_same_query!` | Beam `TableT f` type |
 | **Read model** | `models/<table>.rs` | `#[derive(Queryable, Selectable, Identifiable)]` struct | domain type |
 | **Insert model** | `models/<table>.rs` | `#[derive(Insertable)]` `New<Table>` struct | Beam `create` |
 | **Custom types** | `types/<name>.rs` | Rust `enum` / `struct` (serde + Text-backed column) | `types:` block (`TypeObject`) |
@@ -76,19 +76,31 @@ Ride:
       - derive: "Show,Eq"
 ```
 
-**Output** — generated Rust:
+**Output** — generated Rust. Schema is one file per table plus a generated `mod.rs`; `updated_at` is auto-injected alongside `created_at` (matching namma-dsl).
 
-`schema.rs`
+`schema/ride.rs`
 ```rust
 diesel::table! {
     ride (id) {
-        id -> Text,
-        status -> Text,
+        id -> Varchar,
+        status -> Varchar,
         fare -> Nullable<Numeric>,
-        driver_id -> Text,
+        driver_id -> Varchar,
         created_at -> Timestamptz,
+        updated_at -> Timestamptz,
     }
 }
+```
+
+`schema/mod.rs` (regenerated from all specs — this is what lets tables be joined)
+```rust
+pub mod ride;
+pub mod booking;
+
+diesel::allow_tables_to_appear_in_same_query!(
+    ride,
+    booking,
+);
 ```
 
 `models/ride.rs`
@@ -107,6 +119,7 @@ pub struct Ride {
     pub fare: Option<Decimal>,
     pub driver_id: String,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -116,34 +129,52 @@ pub struct NewRide {
     pub status: Status,
     pub fare: Option<Decimal>,
     pub driver_id: String,
-    pub created_at: DateTime<Utc>,
 }
 ```
 
-`types/status.rs`
+`types/status.rs` — enums are Text-backed; `FromSql` errors (never panics) on an unknown DB value.
 ```rust
-use diesel::{deserialize::FromSql, serialize::ToSql, sql_types::Text};
+use diesel::{deserialize::{self, FromSql}, serialize::{self, ToSql, Output}, sql_types::Text, pg::Pg};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Text)]
-pub enum Status {
-    New,
-    InProgress,
-    Completed,
-    Cancelled,
+pub enum Status { New, InProgress, Completed, Cancelled }
+
+impl Status {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Status::New => "NEW",
+            Status::InProgress => "INPROGRESS",
+            Status::Completed => "COMPLETED",
+            Status::Cancelled => "CANCELLED",
+        }
+    }
 }
-// + ToSql<Text, Pg> / FromSql<Text, Pg> impls mapping each variant to its string form
+
+impl FromSql<Text, Pg> for Status {
+    fn from_sql(bytes: diesel::pg::PgValue) -> deserialize::Result<Self> {
+        match std::str::from_utf8(bytes.as_bytes())? {
+            "NEW" => Ok(Status::New),
+            "INPROGRESS" => Ok(Status::InProgress),
+            "COMPLETED" => Ok(Status::Completed),
+            "CANCELLED" => Ok(Status::Cancelled),
+            other => Err(format!("unknown Status: {other}").into()),
+        }
+    }
+}
+// + ToSql writing self.as_str(); + a generated round-trip test over every variant
 ```
 
 `migrations/20260613000000_create_ride/up.sql`
 ```sql
 CREATE TABLE ride (
-    id            TEXT PRIMARY KEY,
-    status        TEXT NOT NULL,
+    id            character varying(36) PRIMARY KEY,
+    status        character varying(36) NOT NULL,
     fare          NUMERIC,
-    driver_id     TEXT NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL
+    driver_id     character varying(36) NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ride_driver_id ON ride (driver_id);
 ```
@@ -163,7 +194,7 @@ namma-diesel generate --spec ./spec/Storage/Ride.yaml --out ./generated-rust
 namma-diesel generate --spec ./spec/Storage --out ./generated-rust --no-verify
 ```
 
-The output directory is a normal Cargo crate (`src/schema.rs`, `src/models/`, `src/types/`, `migrations/`) that you add `diesel` to and build.
+The output directory is a normal Cargo crate (`src/schema/` with one file per table + `mod.rs`, `src/models/`, `src/types/`, `migrations/`) that you add `diesel` to and build.
 
 ---
 
@@ -171,20 +202,20 @@ The output directory is a normal Cargo crate (`src/schema.rs`, `src/models/`, `s
 
 `namma-diesel` resolves every field through one mapping table: **spec type → Rust type → Diesel SQL type → Postgres column type.**
 
-| Spec type (namma-dsl) | Rust type | Diesel SQL type | Postgres column |
+| Spec type (namma-dsl) | Rust type | Diesel SQL type | Postgres column (default) |
 |---|---|---|---|
-| `Text` | `String` | `Text` | `TEXT` |
+| `Text` | `String` | `Varchar` | `character varying(36)` |
 | `Maybe T` | `Option<T>` | `Nullable<…>` | (nullable) |
 | `Int` | `i64` | `BigInt` | `BIGINT` |
 | `Bool` | `bool` | `Bool` | `BOOLEAN` |
 | `Double` | `f64` | `Double` | `DOUBLE PRECISION` |
 | `HighPrecMoney` | `rust_decimal::Decimal` | `Numeric` | `NUMERIC` |
 | `UTCTime` | `chrono::DateTime<Utc>` | `Timestamptz` | `TIMESTAMPTZ` |
-| `Id T` | `String` | `Text` | `TEXT` |
-| custom enum + `beamType: Text` | generated `enum` | `Text` | `TEXT` |
+| `Id T` | `String` | `Varchar` | `character varying(36)` |
+| custom enum + `beamType: Text` | generated `enum` | `Varchar` | `character varying(36)` |
 | `[T]` | `Vec<T>` | `Array<…>` | `T[]` |
 
-The map lives in one module and is overridable per field via the spec's `sqlType:` and `beamType:` blocks — the same override knobs namma-dsl exposes. Adding a new type is a one-line addition there.
+These are the **defaults** (they mirror namma-dsl's out-of-box `sqlTypeMapper`, e.g. `Text`/`Id` → `character varying(36)`, not `TEXT`). The whole map lives in an optional TOML config and is overridable per project and per field (via the spec's `sqlType:`/`beamType:` blocks) — because namma-dsl's mapping is itself project-configurable, so there is no single universal mapping. Adding or overriding a type is a one-line change.
 
 ---
 
@@ -201,7 +232,7 @@ A classic **parser → IR → generators** pipeline, deliberately mirroring namm
 - **`ir`** — the intermediate representation: `TableDef`, `FieldDef`, `TypeDef`, `Constraint`, `IndexDef`. This is the contract between parsing and generation; everything downstream reads the IR, never the raw YAML.
 - **`parser`** — `serde_yaml` → IR. Tolerates the existing namma-dsl format (old and new field syntax).
 - **`typemap`** — the table above, as code.
-- **`codegen`** — [Askama](https://github.com/rinja-rs/askama) templates (`templates/*.jinja`), one per artifact. Templates are compiled *into* the binary, so a broken template is a compile error of the generator, not a runtime surprise.
+- **`codegen`** — [Askama](https://github.com/rinja-rs/askama) **0.13+** templates (`templates/*.jinja`), one per artifact. (Askama was briefly renamed `rinja` and then renamed back — use the `askama` crate.) Templates are compiled *into* the binary, so a broken template is a compile error of the generator, not a runtime surprise.
 - **`verify`** — shells out to `rustfmt` and `cargo check`; non-zero exit = hard fail with the compiler's output.
 - **`cli`** — the `namma-diesel` binary (clap).
 
