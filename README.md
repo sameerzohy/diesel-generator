@@ -237,7 +237,7 @@ Full rationale, phase-by-phase build order, and the Rust concepts each phase tea
 
 ## Status
 
-Pre-implementation. This repository currently contains the design (`README.md`) and the build plan (`PLAN.md`). See the plan for the milestone breakdown.
+v1 in progress — **8 of 9 commits done**. The full pipeline works end to end: a spec generates a Diesel **schema**, **models** (read + insert structs), **custom enum types**, **SQL up/down migrations**, and an output crate (`Cargo.toml` + `lib.rs`) that is auto-formatted with `rustfmt` and verified with `cargo check` before the command reports success. Remaining: directory mode (generate every spec in a folder) + friendlier errors. See [`PLAN.md`](./PLAN.md) for the milestone breakdown.
 
 ## Relationship to namma-dsl
 

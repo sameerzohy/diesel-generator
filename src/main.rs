@@ -4,6 +4,7 @@ mod parser;
 mod typemap;
 mod config;
 mod codegen;
+mod verify;
 
 use anyhow::Result;
 

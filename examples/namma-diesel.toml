@@ -1,0 +1,25 @@
+# Example project config for namma-diesel.
+#
+# The generator ships NO custom-type knowledge: a consuming project supplies it
+# here. This file is what makes the example specs generate a crate that compiles.
+#
+# Dependency fragments are written as single-quoted TOML strings (literal — the
+# inner double quotes are preserved verbatim into the generated Cargo.toml).
+
+[cargo.dependencies]
+diesel = '{ version = "2", features = ["postgres_backend", "chrono"] }'
+serde  = '{ version = "1", features = ["derive"] }'
+
+[types.UTCTime]
+rust   = "DateTime<Utc>"
+diesel = "Timestamptz"
+pg     = "timestamptz"
+import = "chrono::{DateTime, Utc}"
+crate  = 'chrono = { version = "0.4", features = ["serde"] }'
+
+[types.HighPrecMoney]
+rust   = "Decimal"
+diesel = "Numeric"
+pg     = "numeric"
+import = "rust_decimal::Decimal"
+crate  = 'rust_decimal = { version = "1", features = ["db-diesel2-postgres"] }'

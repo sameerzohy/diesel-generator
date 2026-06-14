@@ -341,6 +341,67 @@ pub fn generate_migrations(tables: &[TableDef], config: &Config) -> Result<Vec<G
     Ok(files)
 }
 
+/// Generate the output crate's `Cargo.toml` (Commit 8). `[dependencies]` is the
+/// project's `[cargo.dependencies]` verbatim + each *used* custom type's `crate`
+/// line (deduped by crate name; base wins), with a default `diesel` injected if
+/// the project didn't declare one. Deps are sorted for deterministic output.
+pub fn generate_cargo_toml(tables: &[TableDef], config: &Config, crate_name: &str) -> GeneratedFile {
+    use std::collections::BTreeMap;
+
+    // name -> raw TOML dep fragment (the RHS of `name = <fragment>`).
+    let mut deps: BTreeMap<String, String> = BTreeMap::new();
+    for (name, fragment) in &config.cargo.dependencies {
+        deps.insert(name.clone(), fragment.clone());
+    }
+    // diesel is the one non-negotiable dep — default it if the project omitted it.
+    deps.entry("diesel".to_string())
+        .or_insert_with(|| "{ version = \"2\", features = [\"postgres_backend\"] }".to_string());
+
+    // Pull in the crate line for each custom type actually used by these specs.
+    let mut seen = std::collections::HashSet::new();
+    for table in tables {
+        for field in &table.fields {
+            if !seen.insert(field.spec_type.clone()) {
+                continue;
+            }
+            if let Some(krate) = config.types.get(&field.spec_type).and_then(|m| m.krate.as_ref()) {
+                // A crate line is `name = <fragment>`; base deps win on collision.
+                if let Some((name, fragment)) = krate.split_once('=') {
+                    deps.entry(name.trim().to_string())
+                        .or_insert_with(|| fragment.trim().to_string());
+                }
+            }
+        }
+    }
+
+    let dep_lines = deps
+        .iter()
+        .map(|(name, fragment)| format!("{name} = {fragment}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let contents = format!(
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n{dep_lines}\n"
+    );
+    GeneratedFile {
+        path: PathBuf::from("Cargo.toml"),
+        contents,
+    }
+}
+
+/// Generate the output crate's `src/lib.rs` (Commit 8): the module roots. The
+/// `types` module exists only when at least one enum was generated.
+pub fn generate_lib_rs(tables: &[TableDef]) -> GeneratedFile {
+    let mut mods = vec!["pub mod schema;".to_string(), "pub mod models;".to_string()];
+    if tables.iter().any(|t| !t.types.is_empty()) {
+        mods.push("pub mod types;".to_string());
+    }
+    GeneratedFile {
+        path: PathBuf::from("src/lib.rs"),
+        contents: format!("{}\n", mods.join("\n")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,5 +559,71 @@ import = "rust_decimal::Decimal"
         assert!(up.contents.contains("PRIMARY KEY (account_id, version)"));
         // no inline PRIMARY KEY on any column when the key is composite.
         assert!(!up.contents.contains("account_id character varying(36) PRIMARY KEY"));
+    }
+
+    /// A project config with a `[cargo.dependencies]` base + custom-type crates.
+    fn project_config() -> Config {
+        toml::from_str(
+            r#"
+[cargo.dependencies]
+serde = '{ version = "1", features = ["derive"] }'
+
+[types.UTCTime]
+rust = "DateTime<Utc>"
+diesel = "Timestamptz"
+pg = "timestamptz"
+import = "chrono::{DateTime, Utc}"
+crate = 'chrono = { version = "0.4", features = ["serde"] }'
+
+[types.HighPrecMoney]
+rust = "Decimal"
+diesel = "Numeric"
+pg = "numeric"
+import = "rust_decimal::Decimal"
+crate = 'rust_decimal = { version = "1", features = ["db-diesel2-postgres"] }'
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cargo_toml_assembles_deps() {
+        let ride = parse_spec(include_str!("../examples/specs/Ride.yaml")).unwrap();
+        let f = generate_cargo_toml(&[ride], &project_config(), "demo");
+
+        assert!(f.contents.contains("name = \"demo\""));
+        assert!(f.contents.contains("edition = \"2021\""));
+        // diesel was not in the config -> default injected.
+        assert!(f
+            .contents
+            .contains("diesel = { version = \"2\", features = [\"postgres_backend\"] }"));
+        // base dep, verbatim.
+        assert!(f
+            .contents
+            .contains("serde = { version = \"1\", features = [\"derive\"] }"));
+        // crate lines for the custom types Ride actually uses.
+        assert!(f.contents.contains("chrono = { version = \"0.4\""));
+        assert!(f.contents.contains("rust_decimal = { version = \"1\""));
+    }
+
+    #[test]
+    fn cargo_toml_omits_unused_type_crates() {
+        // Booking uses no custom types -> only the diesel default (no chrono/rust_decimal).
+        let booking = parse_spec(include_str!("../examples/specs/Booking.yaml")).unwrap();
+        // Booking still injects UTCTime timestamps, so give it that type, plus an unused one.
+        let f = generate_cargo_toml(&[booking], &project_config(), "demo");
+        assert!(f.contents.contains("chrono")); // UTCTime timestamps are used
+        assert!(!f.contents.contains("rust_decimal")); // HighPrecMoney is not
+    }
+
+    #[test]
+    fn lib_rs_types_module_only_with_enums() {
+        let ride = parse_spec(include_str!("../examples/specs/Ride.yaml")).unwrap();
+        let booking = parse_spec(include_str!("../examples/specs/Booking.yaml")).unwrap();
+        assert!(generate_lib_rs(&[ride]).contents.contains("pub mod types;"));
+        let lib = generate_lib_rs(&[booking]);
+        assert!(!lib.contents.contains("pub mod types;"));
+        assert!(lib.contents.contains("pub mod schema;"));
+        assert!(lib.contents.contains("pub mod models;"));
     }
 }

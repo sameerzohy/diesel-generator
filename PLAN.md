@@ -278,13 +278,38 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
     snapshot (`DROP TABLE ride;`), and a composite-PK case emitting table-level `PRIMARY KEY (…)`.
   - *Learn:* `std::fs::create_dir_all`, `PathBuf`, SQL formatting, extending the IR + parser.
 
-- [ ] **Commit 8 — `feat: post-gen rustfmt + cargo check verification`** ← **the safety net**
-  - *Goal:* prove generated code is valid; fail loudly if not.
-  - *Touch:* generate the `<out>` crate's `Cargo.toml` + `lib.rs`; `src/verify.rs`
-    (`rustfmt` each file, then `cargo check` in `<out>`; non-zero = error). Add
-    `--no-verify`.
-  - *Done when:* a clean run ends with a passing `cargo check`; deliberately breaking a
-    template makes `generate` fail with the compiler's message.
+- [x] **Commit 8 — `feat: post-gen rustfmt + cargo check verification`** ← **the safety net** (done)
+  - *Goal:* make `<out>` a crate that actually compiles, verified automatically; fail loudly if not.
+  - **Crate scaffold (locked):**
+    - `<out>/Cargo.toml` — `[package]` `edition = "2021"` (diesel-stable; the generator's own
+      crate stays 2024), name = sanitized out-dir basename (fallback `generated_diesel`).
+    - `[dependencies]` assembly: take `[cargo.dependencies]` from the project config **verbatim**
+      (each `name = '<toml fragment>'`), then append each **used** type's `crate` line, deduped by
+      crate name (the token before `=`; base wins on collision). If `diesel` isn't present, inject
+      `diesel = { version = "2", features = ["postgres_backend"] }`. **Only deps for types actually
+      resolved are emitted** — collect crate lines during the resolve loop, no unused `rust_decimal`.
+    - `<out>/src/lib.rs` — `pub mod schema;` + `pub mod models;` (+ `pub mod types;` only when any
+      enum was generated).
+  - **Config change (locked):** add a `cargo` section — `Config { types, cargo: CargoConfig }`,
+    `CargoConfig { dependencies: HashMap<String, String> }` (value = raw TOML dep fragment as a
+    string). Absent section = empty (the diesel default still kicks in).
+  - **`src/verify.rs` (new, locked):** `std::process::Command`.
+    - `rustfmt(path)` — run `rustfmt --edition 2021 <file>` per generated `.rs` (skip `.sql`).
+      Always runs (cosmetic). `rustfmt` missing → warn once and skip.
+    - `cargo_check(out)` — `cargo check` in `<out>`, capture stdout+stderr; non-zero exit ⇒
+      `Err` carrying the captured compiler output. `cargo` missing ⇒ hard error.
+  - **`--no-verify` (locked):** skips only the `cargo check` step (matches the README usage line);
+    rustfmt + the scaffold still run.
+  - **CLI order:** write schema/models/types/migrations → write `Cargo.toml` + `lib.rs` → rustfmt
+    the `.rs` files → unless `--no-verify`, `cargo check`.
+  - *Done when:* `cargo test` green; a real end-to-end `generate` of `Ride.yaml` (with a project
+    config that has `[cargo.dependencies]`) ends with a passing `cargo check`, and deliberately
+    breaking a template makes `generate` exit non-zero with the compiler's message. **This is also
+    the commit that ends the bare-`cargo run` friction** — the generator now owns the whole loop
+    and supplies the config-driven deps, so a configured run is turnkey.
+  - *Touch:* `src/verify.rs` (new); `src/codegen.rs` (`generate_cargo_toml`, `generate_lib_rs`);
+    `src/config.rs` (`cargo` section); `src/cli.rs` (write scaffold, `--no-verify`, call verify);
+    a sample `examples/namma-diesel.toml` so the example is runnable.
   - *Learn:* `std::process::Command`, capturing stderr, exit codes, error propagation.
 
 - [ ] **Commit 9 — `feat: directory mode + error messages`**

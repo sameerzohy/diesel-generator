@@ -27,6 +27,18 @@ pub struct Config {
     /// spec type name -> mapping. Comes entirely from the consuming project.
     #[serde(default)]
     pub types: HashMap<String, TypeMapping>,
+    /// Base dependencies for the generated crate (the project owns its deps).
+    #[serde(default)]
+    pub cargo: CargoConfig,
+}
+
+/// Dependencies for the generated crate's `Cargo.toml`. Each value is a raw TOML
+/// dependency fragment (e.g. `{ version = "2", features = ["postgres_backend"] }`)
+/// supplied verbatim by the project — the generator adds no feature logic.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CargoConfig {
+    #[serde(default)]
+    pub dependencies: HashMap<String, String>,
 }
 
 impl Config {
