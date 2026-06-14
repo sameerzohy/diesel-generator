@@ -1,0 +1,31 @@
+---
+source: src/codegen.rs
+expression: model.contents
+---
+
+use diesel::prelude::*;
+use crate::schema::ride;
+use crate::types::status::Status;
+use rust_decimal::Decimal;
+use chrono::{DateTime, Utc};
+
+#[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = ride)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Ride {
+    pub id: String,
+    pub status: Status,
+    pub fare: Option<Decimal>,
+    pub driver_id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = ride)]
+pub struct NewRide {
+    pub id: String,
+    pub status: Status,
+    pub fare: Option<Decimal>,
+    pub driver_id: String,
+}

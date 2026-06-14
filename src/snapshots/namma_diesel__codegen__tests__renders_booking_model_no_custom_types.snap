@@ -1,0 +1,29 @@
+---
+source: src/codegen.rs
+expression: "file_ending(&files, \"models/booking.rs\").contents"
+---
+
+use diesel::prelude::*;
+use crate::schema::booking;
+use chrono::{DateTime, Utc};
+
+#[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = booking)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Booking {
+    pub id: String,
+    pub rider_id: String,
+    pub fare_amount: i64,
+    pub is_cancelled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = booking)]
+pub struct NewBooking {
+    pub id: String,
+    pub rider_id: String,
+    pub fare_amount: i64,
+    pub is_cancelled: bool,
+}

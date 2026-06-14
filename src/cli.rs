@@ -45,7 +45,9 @@ fn generate(spec: &Path, out: &Path, config_path: Option<&Path>) -> Result<()> {
     let table = crate::parser::parse_spec(&text)?;
     let config = crate::config::Config::load(config_path)?;
 
-    let files = crate::codegen::generate_schema(&[table], &config)?;
+    let tables = [table];
+    let mut files = crate::codegen::generate_schema(&tables, &config)?;
+    files.extend(crate::codegen::generate_models(&tables, &config)?);
     for file in &files {
         let dest = out.join(&file.path);
         if let Some(parent) = dest.parent() {

@@ -1,0 +1,25 @@
+{#- escape = "none" — model field types contain Option<…>, which HTML-escaping
+   would mangle into &lt;…&gt;. -#}
+{%- for imp in imports %}
+use {{ imp }};
+{%- endfor %}
+
+#[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
+#[diesel(table_name = {{ table }})]
+{%- if let Some(pk) = primary_key %}
+#[diesel(primary_key({{ pk }}))]
+{%- endif %}
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct {{ struct_name }} {
+{%- for f in row_fields %}
+    pub {{ f.name }}: {{ f.rust }},
+{%- endfor %}
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = {{ table }})]
+pub struct {{ new_struct_name }} {
+{%- for f in insert_fields %}
+    pub {{ f.name }}: {{ f.rust }},
+{%- endfor %}
+}

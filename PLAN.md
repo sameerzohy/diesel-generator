@@ -159,15 +159,51 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
   - *Learn:* traits + derive macros (Askama `Template`), `escape="none"`, lifetimes (clone to
     `String` if the borrow checker fights), iterators, writing files, snapshot testing (`insta`).
 
-- [ ] **Commit 5 — `feat: generate Queryable/Insertable model structs`**
-  - *Goal:* the row struct + `NewX` insert struct.
-  - *Touch:* `templates/model.rs.jinja`; `src/codegen/model.rs`; write
-    `<out>/src/models/<table>.rs` + a `models/mod.rs` declaring them. Share the field-list
-    rendering between the `Queryable` and `NewX` structs (a column partial) to stay DRY (CQ1).
-    Snapshot test.
-  - *Done when:* generated `Ride` + `NewRide` structs match the README example;
-    snapshot green.
-  - *Learn:* more derives, mapping Rust↔Diesel types onto struct fields.
+- [ ] **Commit 5 — `feat: generate Queryable/Insertable model structs`** (implementation-ready)
+  - *Goal:* per table, a row struct + a `NewX` insert struct under `src/models/<table>.rs`,
+    plus a `src/models/mod.rs`. First commit that uses `resolve`'s `rust_type` and `import`.
+  - **Codegen:** `codegen::generate_models(tables: &[TableDef], config: &Config) ->
+    Result<Vec<GeneratedFile>>` (same slice + `GeneratedFile` shape as `generate_schema`).
+  - **Row struct** (all columns):
+    ```
+    #[derive(Debug, Clone, Queryable, Selectable, Identifiable)]
+    #[diesel(table_name = crate::schema::ride)]
+    #[diesel(check_for_backend(diesel::pg::Pg))]
+    pub struct Ride {
+        pub id: String,
+        pub status: Status,
+        pub fare: Option<Decimal>,
+        pub driver_id: String,
+        pub created_at: DateTime<Utc>,
+        pub updated_at: DateTime<Utc>,
+    }
+    ```
+    Composite PK → add `#[diesel(primary_key(a, b))]`.
+  - **Insert struct** (decision locked): `NewRide` has every column **except** the
+    auto-injected `created_at`/`updated_at` (excluded by IR field name `createdAt`/`updatedAt`;
+    the DB defaults them). Keeps `id` (app-supplied).
+    ```
+    #[derive(Debug, Clone, Insertable)]
+    #[diesel(table_name = crate::schema::ride)]
+    pub struct NewRide { pub id: String, pub status: Status, pub fare: Option<Decimal>, pub driver_id: String }
+    ```
+    *(Generalizing to "exclude any field with a SQL `default:`" is a v2 refinement.)*
+  - **Imports:** `use diesel::prelude::*;` (brings the four derives into scope) + the deduped
+    `import` paths from `resolve` (`crate::types::status::Status`, `chrono::{DateTime, Utc}`,
+    `rust_decimal::Decimal`). The Insert struct excludes timestamps, so it may not need chrono;
+    collect imports per actually-used field set.
+  - **Touch:** `templates/model.rs.jinja` (`escape = "none"`); `src/codegen.rs`
+    (`generate_models`, Row/New context structs — share the field-list rendering to stay DRY,
+    CQ1); `src/cli.rs` (`generate` also writes models). `src/models/mod.rs` lists `pub mod <t>;`.
+  - **Footguns:** `escape = "none"` again (`Option<…>` has `<>`); struct name is the IR
+    `name` (CamelCase `Ride`), table_name is `crate::schema::<sql_table>`; `Selectable` needs
+    `check_for_backend` or it won't verify field-vs-schema types.
+  - *Done when:* `cargo test` green — snapshots for `Ride` row + `NewRide` (matches README),
+    a `Booking` case (no custom types), and an assertion that `NewRide` omits `created_at`.
+  - *Learn:* multiple derives, dedup/collect, Diesel attribute macros, mapping Rust types onto
+    struct fields.
+  - *Note:* the **UTCTime** parked decision shows up here — the row struct's `created_at:
+    DateTime<Utc>` needs the chrono import, which today comes from the project `--config`.
 
 ### Target B: complete v1
 
