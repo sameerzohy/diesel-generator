@@ -1,0 +1,12 @@
+{#- Common schema module: pulls in each per-table file (include! keeps the
+   diesel::table! modules flat at crate::schema::<table>) and declares the
+   cross-table rules. joinable! arrives with v2 relations. -#}
+{%- for t in tables %}
+include!("{{ t }}.rs");
+{%- endfor %}
+
+diesel::allow_tables_to_appear_in_same_query!(
+{%- for t in tables %}
+    {{ t }},
+{%- endfor %}
+);

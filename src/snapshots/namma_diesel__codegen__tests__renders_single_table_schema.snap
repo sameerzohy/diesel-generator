@@ -1,0 +1,15 @@
+---
+source: src/codegen.rs
+expression: "file_ending(&files, \"schema/ride.rs\").contents"
+---
+
+diesel::table! {
+    ride (id) {
+        id -> Varchar,
+        status -> Varchar,
+        fare -> Nullable<Numeric>,
+        driver_id -> Varchar,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}

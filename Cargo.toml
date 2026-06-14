@@ -10,3 +10,7 @@ serde_norway = "0.9"
 heck = "0.5"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+askama = "0.13"
+
+[dev-dependencies]
+insta = "1"

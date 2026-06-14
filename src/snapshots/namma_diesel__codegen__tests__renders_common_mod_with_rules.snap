@@ -1,0 +1,12 @@
+---
+source: src/codegen.rs
+expression: "file_ending(&files, \"schema/mod.rs\").contents"
+---
+
+include!("ride.rs");
+include!("booking.rs");
+
+diesel::allow_tables_to_appear_in_same_query!(
+    ride,
+    booking,
+);

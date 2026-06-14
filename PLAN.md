@@ -113,19 +113,51 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
   - *Note:* the generated crate's `Cargo.toml` (Commit 8) must include the `crate` deps of every
     imported type actually used, or `cargo check` fails. Collect used imports in Commit 5.
 
-- [ ] **Commit 4 — `feat: generate per-table schema + global mod.rs`** ← **first generated Rust**
-  - *Goal:* write real Diesel schema from the IR, **A1 layout**.
-  - *Touch:* add `askama` (0.13+, **A5**); `templates/schema.rs.jinja` +
-    `templates/schema_mod.rs.jinja`; `src/codegen/schema.rs` (IR → type-mapped context →
-    render `<out>/src/schema/<table>.rs`, one `diesel::table!` per file). The orchestrator
-    parses **all** specs first, then writes each table file **and** one
-    `<out>/src/schema/mod.rs` declaring every `pub mod <table>;` and emitting
-    `allow_tables_to_appear_in_same_query!(<all tables>);`. Add `insta` (dev) + snapshot tests.
-  - *Done when:* generating from **two** specs writes `schema/<a>.rs`, `schema/<b>.rs`, and a
-    `schema/mod.rs` listing both modules + the `allow_tables_to_appear_in_same_query!` macro;
-    snapshots green. (Single-spec `table!` block still matches the README example.)
-  - *Learn:* traits + derive macros (Askama `Template`), lifetimes (gently — clone to
-    `String` if the borrow checker fights), iterators, writing files, snapshot tests.
+- [ ] **Commit 4 — `feat: generate per-table schema + global mod.rs`** ← **first generated Rust** (implementation-ready)
+  - *Goal:* turn `&[TableDef]` into Diesel schema files (**A1 layout**): one
+    `schema/<table>.rs` per table (`diesel::table!`) + one common `schema/mod.rs` that holds
+    the cross-table rules.
+  - **Codegen shape (locked):** `codegen::generate_schema(tables: &[TableDef], config: &Config)
+    -> Result<Vec<GeneratedFile>>` operates on a **slice**. CLI feeds a `Vec` of 1 now;
+    Commit 9 (directory mode) feeds N. The multi-table `mod.rs` is snapshot-tested in Commit 4
+    by passing `&[ride, booking]` directly — directory mode is NOT pulled forward.
+  - **Per-table file** `schema/<t>.rs`:
+    ```
+    diesel::table! {
+        ride (id) {
+            id -> Varchar,
+            status -> Varchar,
+            fare -> Nullable<Numeric>,
+            driver_id -> Varchar,
+            created_at -> Timestamptz,
+            updated_at -> Timestamptz,
+        }
+    }
+    ```
+  - **Common file** `schema/mod.rs` (the "rules" file): `pub mod <t>;` for each table +
+    `diesel::allow_tables_to_appear_in_same_query!(<all tables>);`. (`joinable!` → v2.)
+  - **Touch:** `Cargo.toml` (+`askama` 0.13 **A5**, +`insta` dev); `templates/schema.rs.jinja` +
+    `templates/schema_mod.rs.jinja`; `src/codegen.rs` (`generate_schema`, Askama context structs,
+    file writing); `src/cli.rs` (wire optional `--config` — deferred from C3; `generate` →
+    parse → `Config::load` → `generate_schema` → write under `<out>/src/schema/`);
+    `examples/specs/Booking.yaml` (2nd spec for the multi-table snapshot).
+  - **Footguns / locked details:**
+    - **`#[template(escape = "none")]` on every template** — Askama's default HTML escaper
+      would mangle the `<`/`>` in `Nullable<Numeric>` into `&lt;`/`&gt;`. Critical.
+    - **No primary key → hard `anyhow` error** (`diesel::table!` requires a PK header). Never silent.
+    - **Composite PK** → header `ride (id, version)`; PK field names mapped to their resolved
+      `column_name`.
+    - **Dumb templates** — resolve/snake-case/join in Rust; context structs carry finished strings.
+    - **No config shipped** — snapshot tests build `Config` inline (like `typemap`'s `project()`).
+  - *Done when:* `cargo test` green — snapshots for single-table `schema/ride.rs`, two-table
+    `schema/mod.rs` (both `pub mod` + the `allow_tables!` macro), a no-PK spec → `Err`, and a
+    composite-PK header. (`cargo run` end-to-end on `Ride.yaml` now needs *your* `--config`
+    because of `HighPrecMoney` + the decoupling — by design; the snapshot tests are the gate.)
+  - *Sub-steps:* **4a** Askama + `schema.rs.jinja` + single-table render/snapshot → **4b**
+    `schema_mod.rs.jinja` + multi-table `mod.rs` + `Booking.yaml` → **4c** no-PK error +
+    composite PK → **4d** wire `--config` + write files to `<out>/src/schema/`.
+  - *Learn:* traits + derive macros (Askama `Template`), `escape="none"`, lifetimes (clone to
+    `String` if the borrow checker fights), iterators, writing files, snapshot testing (`insta`).
 
 - [ ] **Commit 5 — `feat: generate Queryable/Insertable model structs`**
   - *Goal:* the row struct + `NewX` insert struct.

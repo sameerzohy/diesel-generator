@@ -1,0 +1,10 @@
+Booking:
+  tableName: booking
+  fields:
+    id: Id Booking
+    riderId: Id Person
+    fareAmount: Int
+    isCancelled: Bool
+  constraints:
+    id: PrimaryKey
+    riderId: SecondaryKey

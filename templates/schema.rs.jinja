@@ -1,0 +1,9 @@
+{#- escape = "none" is set on the template struct — without it, Askama would
+   HTML-escape the `<`/`>` in types like `Nullable<Numeric>`. -#}
+diesel::table! {
+    {{ table }} ({{ pk }}) {
+{%- for c in columns %}
+        {{ c.name }} -> {{ c.sql }},
+{%- endfor %}
+    }
+}
