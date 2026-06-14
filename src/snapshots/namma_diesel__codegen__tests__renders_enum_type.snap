@@ -1,0 +1,68 @@
+---
+source: src/codegen.rs
+expression: status.contents
+---
+use diesel::deserialize::{self, FromSql};
+use diesel::pg::{Pg, PgValue};
+use diesel::serialize::{self, IsNull, Output, ToSql};
+use diesel::sql_types::Text;
+use diesel::{AsExpression, FromSqlRow};
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsExpression, FromSqlRow)]
+#[diesel(sql_type = Text)]
+pub enum Status {
+    NEW,
+    INPROGRESS,
+    COMPLETED,
+    CANCELLED,
+}
+
+impl Status {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Status::NEW => "NEW",
+            Status::INPROGRESS => "INPROGRESS",
+            Status::COMPLETED => "COMPLETED",
+            Status::CANCELLED => "CANCELLED",
+        }
+    }
+
+    fn from_str(s: &str) -> deserialize::Result<Self> {
+        match s {
+            "NEW" => Ok(Status::NEW),
+            "INPROGRESS" => Ok(Status::INPROGRESS),
+            "COMPLETED" => Ok(Status::COMPLETED),
+            "CANCELLED" => Ok(Status::CANCELLED),
+            other => Err(format!("unknown Status value: {other}").into()),
+        }
+    }
+}
+
+impl ToSql<Text, Pg> for Status {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
+        out.write_all(self.as_str().as_bytes())?;
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Text, Pg> for Status {
+    fn from_sql(bytes: PgValue<'_>) -> deserialize::Result<Self> {
+        Self::from_str(std::str::from_utf8(bytes.as_bytes())?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trip() {
+        for v in [Status::NEW, Status::INPROGRESS, Status::COMPLETED, Status::CANCELLED, ] {
+            assert_eq!(Status::from_str(v.as_str()).unwrap(), v);
+        }
+        assert!(Status::from_str("definitely-not-a-variant").is_err());
+    }
+}

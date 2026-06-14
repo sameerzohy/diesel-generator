@@ -207,17 +207,46 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
 
 ### Target B: complete v1
 
-- [ ] **Commit 6 — `feat: generate custom types and enums`**
-  - *Goal:* the `types:` block → Rust `enum`/`struct` (needed so model fields compile).
-  - *Touch:* `templates/enum.rs.jinja`; `src/codegen/types.rs` (enum + serde +
-    `AsExpression`/`FromSqlRow` + `ToSql`/`FromSql<Text, Pg>` mapping variants to
-    strings, **A4** — Text-backed, not `diesel-derive-enum`). `FromSql` returns
-    `Err` (never panics) on an unrecognized string. Generate a **round-trip test per enum**
-    (every variant serializes to its string and parses back) — closes test gap T1.
-    Snapshot test.
-  - *Done when:* generated `Status` enum matches the README example; the round-trip test
-    passes; an unknown DB string yields a Diesel error, not a panic; snapshot green.
-  - *Learn:* how Diesel maps custom Rust types to columns (`ToSql`/`FromSql`).
+- [ ] **Commit 6 — `feat: generate custom types and enums`** (implementation-ready) ← **crate compiles after this**
+  - *Goal:* the spec `types:` block → a Rust enum per type under `src/types/<snake>.rs`
+    (matching the `crate::types::<snake>::<Name>` import Commit 3 emits) + `src/types/mod.rs`.
+    Makes the model fields (`status: Status`) resolve.
+  - **Codegen:** `codegen::generate_types(tables: &[TableDef], _config: &Config) ->
+    Result<Vec<GeneratedFile>>` (same slice/`GeneratedFile` shape). Iterate each table's
+    `TypeDef::Enum`.
+  - **Variant naming (locked):** variant name = the spec value **verbatim** (stored DB string
+    == variant name, 1:1). Emit `#[allow(non_camel_case_types)]` on the enum to cover
+    SCREAMING values.
+  - **Generated enum** (A4 — Text-backed, **not** `diesel-derive-enum`):
+    ```
+    #[allow(non_camel_case_types)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsExpression, FromSqlRow)]
+    #[diesel(sql_type = Text)]
+    pub enum Status { NEW, INPROGRESS, COMPLETED, CANCELLED }
+    ```
+    plus `fn as_str(&self) -> &'static str` (variant → string) and
+    `fn from_str(s: &str) -> deserialize::Result<Self>` (string → variant, else `Err`).
+    `ToSql<Text, Pg>` writes `as_str()`; `FromSql<Text, Pg>` calls `from_str` — **never panics**
+    on an unknown value.
+  - **Round-trip test (A4 / T1):** generate an inline `#[cfg(test)]` in the output crate:
+    `from_str(as_str(v)) == v` for every variant, and `from_str("bogus")` is `Err`. Pure (no
+    DB) because it tests the helpers, not the Diesel impls. The generator's own tests snapshot
+    the file + assert the `Err` arm is present.
+  - **Touch:** `templates/enum.rs.jinja` (`escape = "none"` — types have `<>` via generics/derives);
+    `src/codegen.rs` (`generate_types`, context struct with `{ name, allow_lint, variants:
+    Vec<{ ident, value }> }`); `src/cli.rs` (`generate` also writes types). `src/types/mod.rs`
+    lists `pub mod <snake>;`. Sync the README enum example to verbatim variants.
+  - **Footguns:** `as_str`/`from_str` arms must be 1:1 with the variants; `from_str`'s `_ =>`
+    arm returns `Err`, not `unreachable!`.
+  - *Done when:* `cargo test` green — snapshot of `types/status.rs` (enum + derives + impls +
+    the round-trip test text), and assertions that the `Err` arm and `#[allow(...)]` are present.
+  - *Learn:* how Diesel maps a custom Rust type to a column (`ToSql`/`FromSql`, `AsExpression`/
+    `FromSqlRow`), `match` arms, generating test code.
+  - *NOT in scope:* **records** (non-enum `types:`) — the IR's `TypeDef` is `Enum`-only; records
+    are a v2 item (would add `TypeDef::Record` parsing in the IR first).
+  - *After this commit:* schema + models + types all exist. A manual `cargo check` on the output
+    needs only a one-line `lib.rs` (`mod schema; mod models; mod types;`) + the deps — which
+    Commit 8 generates automatically.
 
 - [ ] **Commit 7 — `feat: generate SQL up/down migrations`**
   - *Goal:* Diesel migration pair from the IR.

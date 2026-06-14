@@ -9,7 +9,7 @@ use askama::Template;
 use heck::ToSnakeCase;
 
 use crate::config::Config;
-use crate::ir::TableDef;
+use crate::ir::{TableDef, TypeDef};
 use crate::typemap;
 
 /// A file the generator produced: path relative to the output crate + contents.
@@ -55,6 +55,13 @@ struct ModelTemplate {
     primary_key: Option<String>, // Some("a, b") only when the PK isn't the default `id`
     row_fields: Vec<ModelField>,
     insert_fields: Vec<ModelField>,
+}
+
+#[derive(Template)]
+#[template(path = "enum.rs.jinja", escape = "none")]
+struct EnumTemplate {
+    name: String,          // "Status"
+    variants: Vec<String>, // verbatim spec values; variant name == stored string
 }
 
 /// Generate the schema files for a set of tables (A1). The CLI passes one table
@@ -200,6 +207,50 @@ pub fn generate_models(tables: &[TableDef], config: &Config) -> Result<Vec<Gener
     Ok(files)
 }
 
+/// Generate the custom enum types (Commit 6): each `types:` enum becomes a
+/// Text-backed Rust enum under `src/types/<snake>.rs` (matching the
+/// `crate::types::<snake>::<Name>` import the type mapper emits), plus a
+/// `src/types/mod.rs`. Variant names are the spec values verbatim (A4).
+pub fn generate_types(tables: &[TableDef], _config: &Config) -> Result<Vec<GeneratedFile>> {
+    let mut files = Vec::new();
+    let mut module_names = Vec::new();
+
+    for table in tables {
+        for ty in &table.types {
+            // TypeDef is enum-only in v1; records are a v2 item.
+            let TypeDef::Enum { name, variants } = ty;
+            let module = name.to_snake_case();
+            let contents = EnumTemplate {
+                name: name.clone(),
+                variants: variants.clone(),
+            }
+            .render()?;
+            files.push(GeneratedFile {
+                path: PathBuf::from(format!("src/types/{module}.rs")),
+                contents,
+            });
+            if !module_names.contains(&module) {
+                module_names.push(module);
+            }
+        }
+    }
+
+    if !module_names.is_empty() {
+        let mod_contents = module_names
+            .iter()
+            .map(|m| format!("pub mod {m};"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        files.push(GeneratedFile {
+            path: PathBuf::from("src/types/mod.rs"),
+            contents: mod_contents,
+        });
+    }
+
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +344,30 @@ import = "rust_decimal::Decimal"
         let booking = parse_spec(include_str!("../examples/specs/Booking.yaml")).unwrap();
         let files = generate_models(&[booking], &config()).unwrap();
         insta::assert_snapshot!(file_ending(&files, "models/booking.rs").contents);
+    }
+
+    #[test]
+    fn renders_enum_type() {
+        let ride = parse_spec(include_str!("../examples/specs/Ride.yaml")).unwrap();
+        let files = generate_types(&[ride], &Config::default()).unwrap();
+        let status = file_ending(&files, "types/status.rs");
+        insta::assert_snapshot!(status.contents);
+
+        // A4: FromSql errors (never panics) on an unknown value; the Err arm is present.
+        assert!(status.contents.contains("unknown Status value"));
+        assert!(status.contents.contains("#[allow(non_camel_case_types)]"));
+        assert!(status.contents.contains("impl FromSql<Text, Pg> for Status"));
+        // mod.rs declares the module
+        assert!(files
+            .iter()
+            .any(|f| f.path.ends_with("types/mod.rs") && f.contents.contains("pub mod status;")));
+    }
+
+    #[test]
+    fn no_types_block_produces_no_files() {
+        // Booking has no `types:` block -> no type files at all.
+        let booking = parse_spec(include_str!("../examples/specs/Booking.yaml")).unwrap();
+        let files = generate_types(&[booking], &Config::default()).unwrap();
+        assert!(files.is_empty());
     }
 }

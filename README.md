@@ -132,38 +132,29 @@ pub struct NewRide {
 }
 ```
 
-`types/status.rs` — enums are Text-backed; `FromSql` errors (never panics) on an unknown DB value.
+`types/status.rs` — enums are Text-backed; variant names are the spec values verbatim, and `FromSql` errors (never panics) on an unknown DB value.
 ```rust
-use diesel::{deserialize::{self, FromSql}, serialize::{self, ToSql, Output}, sql_types::Text, pg::Pg};
+use diesel::{deserialize::{self, FromSql}, serialize::{self, IsNull, Output, ToSql}, sql_types::Text, pg::{Pg, PgValue}};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsExpression, FromSqlRow)]
 #[diesel(sql_type = Text)]
-pub enum Status { New, InProgress, Completed, Cancelled }
+pub enum Status { NEW, INPROGRESS, COMPLETED, CANCELLED }
 
 impl Status {
     fn as_str(&self) -> &'static str {
-        match self {
-            Status::New => "NEW",
-            Status::InProgress => "INPROGRESS",
-            Status::Completed => "COMPLETED",
-            Status::Cancelled => "CANCELLED",
+        match self { Status::NEW => "NEW", Status::INPROGRESS => "INPROGRESS", Status::COMPLETED => "COMPLETED", Status::CANCELLED => "CANCELLED" }
+    }
+    fn from_str(s: &str) -> deserialize::Result<Self> {
+        match s {
+            "NEW" => Ok(Status::NEW), "INPROGRESS" => Ok(Status::INPROGRESS), "COMPLETED" => Ok(Status::COMPLETED), "CANCELLED" => Ok(Status::CANCELLED),
+            other => Err(format!("unknown Status value: {other}").into()),
         }
     }
 }
-
-impl FromSql<Text, Pg> for Status {
-    fn from_sql(bytes: diesel::pg::PgValue) -> deserialize::Result<Self> {
-        match std::str::from_utf8(bytes.as_bytes())? {
-            "NEW" => Ok(Status::New),
-            "INPROGRESS" => Ok(Status::InProgress),
-            "COMPLETED" => Ok(Status::Completed),
-            "CANCELLED" => Ok(Status::Cancelled),
-            other => Err(format!("unknown Status: {other}").into()),
-        }
-    }
-}
-// + ToSql writing self.as_str(); + a generated round-trip test over every variant
+// + ToSql<Text,Pg> (writes as_str) + FromSql<Text,Pg> (calls from_str) + a generated round-trip test
 ```
 
 `migrations/20260613000000_create_ride/up.sql`
