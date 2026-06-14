@@ -64,6 +64,20 @@ struct EnumTemplate {
     variants: Vec<String>, // verbatim spec values; variant name == stored string
 }
 
+/// One `CREATE INDEX` line in an up.sql migration.
+struct IndexLine {
+    name: String,   // "idx_ride_driver_id"
+    column: String, // "driver_id"
+}
+
+#[derive(Template)]
+#[template(path = "migration_up.sql.jinja", escape = "none")]
+struct MigrationTemplate {
+    table: String,
+    body: String, // column/PK lines, pre-joined with ",\n    " in Rust
+    indexes: Vec<IndexLine>,
+}
+
 /// Generate the schema files for a set of tables (A1). The CLI passes one table
 /// today; directory mode (Commit 9) will pass many. The common `mod.rs` is built
 /// from all of them, so the multi-table case is exercised by passing a slice.
@@ -251,6 +265,82 @@ pub fn generate_types(tables: &[TableDef], _config: &Config) -> Result<Vec<Gener
     Ok(files)
 }
 
+/// Generate the SQL migration pair for a set of tables (Commit 7): a `CREATE
+/// TABLE` (`up.sql`) + `DROP TABLE` (`down.sql`) per table under
+/// `migrations/<NNNN>_create_<table>/`. The `NNNN` is a zero-padded sequence by
+/// spec order — deterministic, unique, and sortable for Diesel's runner.
+pub fn generate_migrations(tables: &[TableDef], config: &Config) -> Result<Vec<GeneratedFile>> {
+    let mut files = Vec::new();
+
+    for (i, table) in tables.iter().enumerate() {
+        if table.primary_key.is_empty() {
+            return Err(anyhow!("table `{}` has no primary key", table.name));
+        }
+        let pk_cols: Vec<String> = table.primary_key.iter().map(|f| f.to_snake_case()).collect();
+        let single_pk = pk_cols.len() == 1;
+
+        // Each column line: `<col> <pg_type> [NOT NULL] [DEFAULT <d>] [PRIMARY KEY]`.
+        let mut body_lines = Vec::new();
+        for field in &table.fields {
+            let resolved = typemap::resolve(field, &table.types, config)?;
+            // A single-column PK is declared inline; `PRIMARY KEY` already implies
+            // NOT NULL, so we don't also emit it for that column.
+            let inline_pk = single_pk && pk_cols[0] == resolved.column_name;
+
+            let mut line = format!("{} {}", resolved.column_name, resolved.pg_type);
+            if !field.optional && !inline_pk {
+                line.push_str(" NOT NULL");
+            }
+            if let Some(default) = &field.default {
+                line.push_str(&format!(" DEFAULT {default}"));
+            }
+            if inline_pk {
+                line.push_str(" PRIMARY KEY");
+            }
+            body_lines.push(line);
+        }
+        // Composite keys go in a table-level constraint instead.
+        if !single_pk {
+            body_lines.push(format!("PRIMARY KEY ({})", pk_cols.join(", ")));
+        }
+
+        let indexes = table
+            .secondary_keys
+            .iter()
+            .map(|f| {
+                let column = f.to_snake_case();
+                IndexLine {
+                    name: format!("idx_{}_{}", table.sql_table, column),
+                    column,
+                }
+            })
+            .collect();
+
+        let mut up = MigrationTemplate {
+            table: table.sql_table.clone(),
+            body: body_lines.join(",\n    "),
+            indexes,
+        }
+        .render()?;
+        // The trailing `{%- endfor %}` trims the template's final newline; restore it.
+        if !up.ends_with('\n') {
+            up.push('\n');
+        }
+
+        let dir = format!("migrations/{:04}_create_{}", i + 1, table.sql_table);
+        files.push(GeneratedFile {
+            path: PathBuf::from(format!("{dir}/up.sql")),
+            contents: up,
+        });
+        files.push(GeneratedFile {
+            path: PathBuf::from(format!("{dir}/down.sql")),
+            contents: format!("DROP TABLE {};\n", table.sql_table),
+        });
+    }
+
+    Ok(files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +459,44 @@ import = "rust_decimal::Decimal"
         let booking = parse_spec(include_str!("../examples/specs/Booking.yaml")).unwrap();
         let files = generate_types(&[booking], &Config::default()).unwrap();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn renders_ride_migration() {
+        let ride = parse_spec(include_str!("../examples/specs/Ride.yaml")).unwrap();
+        let files = generate_migrations(&[ride], &config()).unwrap();
+        let up = file_ending(&files, "up.sql");
+        insta::assert_snapshot!(up.contents);
+
+        // single-column PK is inline; `fare` is nullable (no NOT NULL).
+        assert!(up.contents.contains("id character varying(36) PRIMARY KEY"));
+        assert!(up.contents.contains("fare numeric"));
+        assert!(!up.contents.contains("fare numeric NOT NULL"));
+        // timestamps self-default so inserts that omit them satisfy NOT NULL.
+        assert!(up
+            .contents
+            .contains("created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP"));
+        // secondary key -> index.
+        assert!(up
+            .contents
+            .contains("CREATE INDEX idx_ride_driver_id ON ride (driver_id);"));
+
+        let down = file_ending(&files, "down.sql");
+        assert_eq!(down.contents.trim(), "DROP TABLE ride;");
+        // dir is the zero-padded sequence number.
+        assert!(files
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("0001_create_ride")));
+    }
+
+    #[test]
+    fn composite_pk_migration_is_table_level() {
+        let spec = "Ledger:\n  tableName: ledger\n  fields:\n    accountId: Id Account\n    version: Int\n  constraints:\n    accountId: PrimaryKey\n    version: PrimaryKey\n";
+        let table = parse_spec(spec).unwrap();
+        let files = generate_migrations(&[table], &config()).unwrap();
+        let up = file_ending(&files, "up.sql");
+        assert!(up.contents.contains("PRIMARY KEY (account_id, version)"));
+        // no inline PRIMARY KEY on any column when the key is composite.
+        assert!(!up.contents.contains("account_id character varying(36) PRIMARY KEY"));
     }
 }

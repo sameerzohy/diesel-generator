@@ -42,7 +42,7 @@ Given one Storage spec, `namma-diesel` emits, per table:
 | **Read model** | `models/<table>.rs` | `#[derive(Queryable, Selectable, Identifiable)]` struct | domain type |
 | **Insert model** | `models/<table>.rs` | `#[derive(Insertable)]` `New<Table>` struct | Beam `create` |
 | **Custom types** | `types/<name>.rs` | Rust `enum` / `struct` (serde + Text-backed column) | `types:` block (`TypeObject`) |
-| **Migration** | `migrations/<ts>_create_<table>/up.sql` + `down.sql` | Diesel migration pair | SQL `CREATE TABLE` |
+| **Migration** | `migrations/<NNNN>_create_<table>/up.sql` + `down.sql` | Diesel migration pair | SQL `CREATE TABLE` |
 
 Every generated file is run through `rustfmt`, and the whole output is verified with `cargo check` before the command reports success. **If the generated crate doesn't compile, the generator fails loudly** — invalid output never lands silently.
 
@@ -157,17 +157,22 @@ impl Status {
 // + ToSql<Text,Pg> (writes as_str) + FromSql<Text,Pg> (calls from_str) + a generated round-trip test
 ```
 
-`migrations/20260613000000_create_ride/up.sql`
+`migrations/0001_create_ride/up.sql` (directories are zero-padded by spec order — deterministic and sortable for Diesel's runner)
 ```sql
 CREATE TABLE ride (
-    id            character varying(36) PRIMARY KEY,
-    status        character varying(36) NOT NULL,
-    fare          NUMERIC,
-    driver_id     character varying(36) NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id character varying(36) PRIMARY KEY,
+    status character varying(36) NOT NULL,
+    fare numeric,
+    driver_id character varying(36) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_ride_driver_id ON ride (driver_id);
+```
+
+`migrations/0001_create_ride/down.sql`
+```sql
+DROP TABLE ride;
 ```
 
 ---

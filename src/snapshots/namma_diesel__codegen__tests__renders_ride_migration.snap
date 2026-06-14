@@ -1,0 +1,14 @@
+---
+source: src/codegen.rs
+assertion_line: 465
+expression: up.contents
+---
+CREATE TABLE ride (
+    id character varying(36) PRIMARY KEY,
+    status character varying(36) NOT NULL,
+    fare numeric,
+    driver_id character varying(36) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_ride_driver_id ON ride (driver_id);

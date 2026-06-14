@@ -118,6 +118,7 @@ mod tests {
             spec_type: spec_type.into(),
             optional,
             db_type_override: None,
+            default: None,
             constraints: vec![],
         }
     }

@@ -49,6 +49,7 @@ fn generate(spec: &Path, out: &Path, config_path: Option<&Path>) -> Result<()> {
     let mut files = crate::codegen::generate_schema(&tables, &config)?;
     files.extend(crate::codegen::generate_models(&tables, &config)?);
     files.extend(crate::codegen::generate_types(&tables, &config)?);
+    files.extend(crate::codegen::generate_migrations(&tables, &config)?);
     for file in &files {
         let dest = out.join(&file.path);
         if let Some(parent) = dest.parent() {

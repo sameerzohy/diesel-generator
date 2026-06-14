@@ -14,6 +14,7 @@ pub struct FieldDef {
     pub spec_type: String,                // "Id Person" (Maybe + |relation stripped)
     pub optional: bool,
     pub db_type_override: Option<String>, // from `beamType:`
+    pub default: Option<String>,          // SQL default (from `default:` or injected for timestamps)
     pub constraints: Vec<Constraint>,
 }
 

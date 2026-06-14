@@ -1,0 +1,8 @@
+{#- column/PK lines are pre-joined in Rust (`body`) to keep comma handling out
+   of the template. escape = "none" so nothing is HTML-mangled. -#}
+CREATE TABLE {{ table }} (
+    {{ body }}
+);
+{%- for idx in indexes %}
+CREATE INDEX {{ idx.name }} ON {{ table }} ({{ idx.column }});
+{%- endfor %}

@@ -248,13 +248,35 @@ only when its **Done when** check passes. Commits 1–5 are the table + schema t
     needs only a one-line `lib.rs` (`mod schema; mod models; mod types;`) + the deps — which
     Commit 8 generates automatically.
 
-- [ ] **Commit 7 — `feat: generate SQL up/down migrations`**
-  - *Goal:* Diesel migration pair from the IR.
-  - *Touch:* `templates/migration_up.sql.jinja`; `src/codegen/migration.rs`; write
-    `migrations/<ts>_create_<table>/{up,down}.sql` (stable ts via `--migration-ts`).
-    Snapshot test.
-  - *Done when:* `up.sql` would create the table the schema describes; snapshot green.
-  - *Learn:* `std::fs::create_dir_all`, `PathBuf`, formatting.
+- [x] **Commit 7 — `feat: generate SQL up/down migrations`** (done)
+  - *Goal:* a Diesel migration pair per table — `migrations/<NNNN>_create_<table>/up.sql` +
+    `down.sql`.
+  - **Dir naming (locked):** zero-padded **sequence number** by spec order
+    (`0001_create_ride`, `0002_create_booking`). Deterministic, unique, sortable, no flag.
+    (Renumbering on table insert is acceptable in v1's regenerate-fresh model; incremental
+    `ALTER` diffs are v2.)
+  - **Codegen:** `codegen::generate_migrations(tables: &[TableDef], config: &Config) ->
+    Result<Vec<GeneratedFile>>` (same slice/`GeneratedFile` shape). Index `tables` for the NNNN.
+  - **up.sql** — `CREATE TABLE <sql_table> ( <cols> );` then a `CREATE INDEX` per secondary key:
+    - column line: `<column> <pg_type>` + ` NOT NULL` (when `!optional`) + ` DEFAULT <default>` (when set).
+    - **PK:** single `id` → inline `PRIMARY KEY` on the column; composite → table-level
+      `PRIMARY KEY (a, b)`.
+    - **index:** each `secondary_keys` entry → `CREATE INDEX idx_<table>_<col> ON <table> (<col>);`
+      (finally consumes `secondary_keys`).
+  - **down.sql** — `DROP TABLE <sql_table>;`.
+  - **IR change (locked):** add `default: Option<String>` to `FieldDef`. `inject_timestamps`
+    sets `created_at`/`updated_at` → `Some("CURRENT_TIMESTAMP")` (required — `NewRide` omits
+    them, so the column must self-default). The parser also reads the spec's `default:` block
+    into it (one mechanism, covers spec defaults too).
+  - **Touch:** `templates/migration_up.sql.jinja` (`escape = "none"` not needed for SQL, but set
+    it anyway for consistency — SQL has no `<>` issue); `src/codegen.rs` (`generate_migrations`,
+    context struct `{ table, columns: Vec<{name, ty, not_null, default?}>, pk_inline?/pk_table?,
+    indexes }`); `src/ir.rs` (`default`); `src/parser.rs` (`default:` parse + timestamp defaults);
+    `src/cli.rs` (write migrations). down.sql can be built inline (one line) — no template needed.
+  - *Done when:* `cargo test` green — `up.sql` snapshot (CREATE TABLE + the `NOT NULL`, the
+    `created_at … DEFAULT CURRENT_TIMESTAMP`, the `CREATE INDEX idx_ride_driver_id`), `down.sql`
+    snapshot (`DROP TABLE ride;`), and a composite-PK case emitting table-level `PRIMARY KEY (…)`.
+  - *Learn:* `std::fs::create_dir_all`, `PathBuf`, SQL formatting, extending the IR + parser.
 
 - [ ] **Commit 8 — `feat: post-gen rustfmt + cargo check verification`** ← **the safety net**
   - *Goal:* prove generated code is valid; fail loudly if not.

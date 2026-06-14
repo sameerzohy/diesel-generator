@@ -30,6 +30,7 @@ pub fn parse_spec(text: &str) -> Result<TableDef> {
     // Sub-mappings we look fields up in (any may be absent).
     let beam_type = body.get("beamType").and_then(Value::as_mapping);
     let constraints = body.get("constraints").and_then(Value::as_mapping);
+    let defaults = body.get("default").and_then(Value::as_mapping);
 
     // 3. Walk `fields:`.
     let mut fields = Vec::new();
@@ -57,11 +58,17 @@ pub fn parse_spec(text: &str) -> Result<TableDef> {
                 .map(parse_constraints)
                 .unwrap_or_default();
 
+            let default = defaults
+                .and_then(|m| m.get(fname.as_str()))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+
             fields.push(FieldDef {
                 name: fname,
                 spec_type,
                 optional,
                 db_type_override,
+                default,
                 constraints: field_constraints,
             });
         }
@@ -125,6 +132,8 @@ fn inject_timestamps(fields: &mut Vec<FieldDef>) {
                 spec_type: "UTCTime".to_string(),
                 optional: false,
                 db_type_override: None,
+                // self-default so inserts that omit timestamps still satisfy NOT NULL.
+                default: Some("CURRENT_TIMESTAMP".to_string()),
                 constraints: Vec::new(),
             });
         }
